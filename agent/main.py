@@ -68,7 +68,7 @@ def main():
                 continue
 
             full_content = None
-            if tr.risk_level == RiskLevel.CRITICAL:
+            if tr.risk_level in (RiskLevel.CRITICAL, RiskLevel.HIGH, RiskLevel.MEDIUM):
                 full_content = github.get_file_content(repo, fname, commit_sha)
 
             review_output = reviewer.review_file(pf, tr.risk_level, full_content)

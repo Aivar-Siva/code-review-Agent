@@ -26,10 +26,22 @@ def _load_prompt() -> str:
         )
 
 
+def _clean_raw(raw: str) -> str:
+    """Strip think blocks and markdown fences before JSON extraction."""
+    raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL)
+    raw = re.sub(r'```(?:json)?\s*', '', raw)
+    raw = raw.strip()
+    return raw
+
+
 def _parse_findings(raw: str, filename: str) -> List[Finding]:
+    print(f"[reviewer] raw LLM response for {filename} (first 800 chars): {raw[:800]}", flush=True)
+    raw = _clean_raw(raw)
     findings = []
+    # Find the outermost JSON object
     json_match = re.search(r'\{.*\}', raw, re.DOTALL)
     if not json_match:
+        print(f"[reviewer] no JSON found in response for {filename}", flush=True)
         return findings
     try:
         data = json.loads(json_match.group())
@@ -45,10 +57,11 @@ def _parse_findings(raw: str, filename: str) -> List[Finding]:
                     fix=item.get("fix", ""),
                     reasoning=item.get("reasoning", ""),
                 ))
-            except (ValueError, KeyError):
-                continue
-    except json.JSONDecodeError:
-        pass
+            except (ValueError, KeyError) as e:
+                print(f"[reviewer] skipping malformed finding: {e} — {item}", flush=True)
+    except json.JSONDecodeError as e:
+        print(f"[reviewer] JSON parse error: {e}", flush=True)
+    print(f"[reviewer] parsed {len(findings)} findings for {filename}", flush=True)
     return findings
 
 
@@ -64,15 +77,16 @@ def _build_messages(system_prompt: str, filename: str, patch_content: str, full_
 def _review_chunk(messages: List[dict], filename: str) -> List[Finding]:
     try:
         raw = bedrock.call_with_retry(bedrock.call_qwen, messages)
-    except Exception:
-        # Fallback to Llama 4 Maverick
+    except Exception as e:
+        print(f"[reviewer] Qwen3 failed: {e}, trying fallback", flush=True)
         try:
             raw = bedrock.call_with_retry(
                 bedrock.call_qwen, messages,
                 model_id=config.REVIEW_MODEL_FALLBACK,
                 max_tokens=config.REVIEW_MAX_TOKENS,
             )
-        except Exception:
+        except Exception as e2:
+            print(f"[reviewer] fallback also failed: {e2}", flush=True)
             return []
     return _parse_findings(raw, filename)
 
@@ -80,22 +94,19 @@ def _review_chunk(messages: List[dict], filename: str) -> List[Finding]:
 def review_file(parsed_file: ParsedFile, risk_level: RiskLevel, full_content: Optional[str] = None) -> ReviewOutput:
     system_prompt = _load_prompt()
     all_findings: List[Finding] = []
-
     total_changes = parsed_file.additions + parsed_file.deletions
 
     if total_changes <= config.LARGE_FILE_LINE_THRESHOLD:
-        # Single pass
         messages = _build_messages(system_prompt, parsed_file.filename, parsed_file.patch, full_content)
         all_findings = _review_chunk(messages, parsed_file.filename)
     else:
-        # Chunked review: group hunks into ~3000-token chunks
         chunk_lines: List[str] = []
         chunk_token_estimate = 0
         seen_lines = set()
 
         for i, hunk in enumerate(parsed_file.hunks):
             hunk_text = extract_context_window(parsed_file, i)
-            hunk_tokens = len(hunk_text) // 4  # rough estimate: 4 chars/token
+            hunk_tokens = len(hunk_text) // 4
 
             if chunk_token_estimate + hunk_tokens > config.CHUNK_TOKEN_SIZE and chunk_lines:
                 chunk_patch = "\n".join(chunk_lines)
@@ -120,6 +131,7 @@ def review_file(parsed_file: ParsedFile, risk_level: RiskLevel, full_content: Op
                     seen_lines.add(key)
                     all_findings.append(f)
 
-    # Filter by confidence threshold
+    before = len(all_findings)
     all_findings = [f for f in all_findings if f.confidence >= config.CONFIDENCE_THRESHOLD]
+    print(f"[reviewer] confidence filter: {before} → {len(all_findings)} (threshold={config.CONFIDENCE_THRESHOLD})", flush=True)
     return ReviewOutput(filename=parsed_file.filename, findings=all_findings)

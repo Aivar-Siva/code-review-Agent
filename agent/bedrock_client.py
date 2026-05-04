@@ -2,7 +2,6 @@
 import json
 import time
 import urllib.request
-import urllib.error
 from typing import List, Dict
 
 import config
@@ -19,7 +18,16 @@ def _post(payload: dict) -> str:
     with urllib.request.urlopen(req, timeout=120) as resp:
         body = resp.read().decode()
 
-    # Handle streaming (newline-delimited JSON chunks)
+    print(f"[bedrock] raw response (first 500 chars): {body[:500]}", flush=True)
+
+    # Try parsing as a single JSON object first (non-streaming)
+    try:
+        obj = json.loads(body.strip())
+        return _extract_text(obj)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Newline-delimited streaming JSON
     text = ""
     for line in body.strip().splitlines():
         line = line.strip()
@@ -27,23 +35,36 @@ def _post(payload: dict) -> str:
             continue
         try:
             chunk = json.loads(line)
+            text += _extract_text(chunk)
         except json.JSONDecodeError:
-            continue
-        # Llama format
-        if "generation" in chunk:
-            text += chunk["generation"]
-        # Messages format (Qwen / DeepSeek)
-        elif "choices" in chunk:
-            for choice in chunk["choices"]:
-                delta = choice.get("delta", {})
-                text += delta.get("content", "")
-                if not delta:
-                    text += choice.get("message", {}).get("content", "")
-        # Single-shot response
-        elif "content" in chunk:
-            text += chunk["content"]
-
+            # Plain text chunk
+            text += line
     return text.strip()
+
+
+def _extract_text(obj: dict) -> str:
+    """Extract text content from any known response shape."""
+    # Llama: {"generation": "..."}
+    if "generation" in obj:
+        return obj["generation"]
+    # OpenAI-style choices
+    if "choices" in obj:
+        for choice in obj["choices"]:
+            # streaming delta
+            content = choice.get("delta", {}).get("content") or ""
+            # non-streaming message
+            if not content:
+                content = choice.get("message", {}).get("content") or ""
+            if content:
+                return content
+    # Direct content field
+    if "content" in obj:
+        c = obj["content"]
+        if isinstance(c, str):
+            return c
+        if isinstance(c, list):
+            return "".join(block.get("text", "") for block in c if isinstance(block, dict))
+    return ""
 
 
 def call_with_retry(fn, *args, **kwargs) -> str:
