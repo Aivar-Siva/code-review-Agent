@@ -1,0 +1,3 @@
+# No third-party dependencies — uses only Python stdlib (urllib, json, hashlib, re, dataclasses)
+# Add below if you want pytest for local test runs
+pytest==8.3.5

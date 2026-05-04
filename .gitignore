@@ -1,0 +1,6 @@
+AVAILABLE_MODELS.md
+.env
+__pycache__
+.ipynb_checkpoints
+*.pyc
+*.pyo
