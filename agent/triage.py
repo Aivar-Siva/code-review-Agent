@@ -14,6 +14,24 @@ _HIGH_PATTERNS = re.compile(
 )
 
 
+def _minimum_risk(f: ParsedFile) -> RiskLevel:
+    """Hard floor on risk level based on file metadata — LLM cannot go below this."""
+    if f.status == "added":
+        return RiskLevel.MEDIUM   # new files always get at least medium
+    if _HIGH_PATTERNS.search(f.filename.lower()):
+        return RiskLevel.HIGH
+    if f.additions + f.deletions > 200:
+        return RiskLevel.MEDIUM
+    return RiskLevel.LOW
+
+
+_RISK_ORDER = {RiskLevel.CRITICAL: 4, RiskLevel.HIGH: 3, RiskLevel.MEDIUM: 2, RiskLevel.LOW: 1, RiskLevel.SKIP: 0}
+
+
+def _max_risk(a: RiskLevel, b: RiskLevel) -> RiskLevel:
+    return a if _RISK_ORDER[a] >= _RISK_ORDER[b] else b
+
+
 def _load_prompt() -> str:
     try:
         with open("prompts/triage_prompt.txt") as f:
@@ -29,7 +47,6 @@ def _load_prompt() -> str:
 def rank_files(files: List[ParsedFile]) -> Dict[str, TriageResult]:
     results: Dict[str, TriageResult] = {}
 
-    # Pre-filter obvious skips locally (no LLM needed)
     to_triage = []
     for f in files:
         if _SKIP_PATTERNS.search(f.filename):
@@ -49,7 +66,7 @@ def rank_files(files: List[ParsedFile]) -> Dict[str, TriageResult]:
 
     try:
         raw = bedrock.call_with_retry(bedrock.call_llama, prompt)
-        # Extract JSON from response
+        print(f"[triage] raw response: {raw[:500]}", flush=True)
         json_match = re.search(r'\{.*\}', raw, re.DOTALL)
         if json_match:
             data = json.loads(json_match.group())
@@ -61,19 +78,17 @@ def rank_files(files: List[ParsedFile]) -> Dict[str, TriageResult]:
                     level = RiskLevel.MEDIUM
                 results[fname] = TriageResult(fname, level, item.get("reasoning", ""))
     except Exception as e:
-        # Fallback: use heuristics
-        for f in to_triage:
-            if _HIGH_PATTERNS.search(f.filename.lower()):
-                level = RiskLevel.HIGH
-            elif f.additions + f.deletions > 200:
-                level = RiskLevel.MEDIUM
-            else:
-                level = RiskLevel.LOW
-            results[f.filename] = TriageResult(f.filename, level, f"heuristic fallback (triage error: {e})")
+        print(f"[triage] LLM failed, using heuristics: {e}", flush=True)
 
-    # Fill any missing files from LLM response
+    # Apply minimum risk floor — LLM cannot downgrade new/sensitive files
     for f in to_triage:
-        if f.filename not in results:
-            results[f.filename] = TriageResult(f.filename, RiskLevel.MEDIUM, "not returned by triage model")
+        floor = _minimum_risk(f)
+        if f.filename in results:
+            final = _max_risk(results[f.filename].risk_level, floor)
+            if final != results[f.filename].risk_level:
+                results[f.filename] = TriageResult(f.filename, final, results[f.filename].reasoning + " [floor applied]")
+        else:
+            results[f.filename] = TriageResult(f.filename, floor, "heuristic fallback")
 
+    print(f"[triage] results: {[(k, v.risk_level.value) for k, v in results.items()]}", flush=True)
     return results
