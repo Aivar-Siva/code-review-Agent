@@ -6,6 +6,6 @@ on:
 
 jobs:
   review:
-    uses: YOUR_ORG/.github/.github/workflows/pr-review-reusable.yml@main
+    uses: Aivar-Siva/code-review-Agent/.github/workflows/pr-review-reusable.yml@main
     secrets:
       BEDROCK_PROXY_URL: ${{ secrets.BEDROCK_PROXY_URL }}
