@@ -27,17 +27,18 @@ def _post(payload: dict) -> str:
     except (json.JSONDecodeError, ValueError):
         pass
 
-    # Newline-delimited streaming JSON
+    # Newline-delimited streaming JSON (SSE: "data: {...}")
     text = ""
     for line in body.strip().splitlines():
         line = line.strip()
-        if not line:
+        if not line or line == "data: [DONE]":
             continue
+        if line.startswith("data: "):
+            line = line[6:]
         try:
             chunk = json.loads(line)
             text += _extract_text(chunk)
         except json.JSONDecodeError:
-            # Plain text chunk
             text += line
     return text.strip()
 

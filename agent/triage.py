@@ -44,6 +44,28 @@ def _load_prompt() -> str:
         )
 
 
+def generate_pr_overview(pr_title: str, pr_body: str, triage_results: Dict[str, TriageResult]) -> str:
+    """Generate a 2-3 sentence plain-English overview of the PR using the triage LLM."""
+    file_list = "\n".join(
+        f"- {fname} ({tr.risk_level.value}): {tr.reasoning}"
+        for fname, tr in triage_results.items()
+        if tr.risk_level != RiskLevel.SKIP
+    )
+    prompt = (
+        "You are a code review assistant. Write a concise 2-3 sentence plain-English overview of this pull request "
+        "describing what it does and why. Do NOT use markdown, bullet points, or headers. Just plain prose.\n\n"
+        f"PR Title: {pr_title}\n"
+        f"PR Description: {pr_body or 'No description provided.'}\n"
+        f"Files changed:\n{file_list}\n\n"
+        "Overview:"
+    )
+    try:
+        return bedrock.call_with_retry(bedrock.call_llama, prompt).strip()
+    except Exception as e:
+        print(f"[triage] overview generation failed: {e}", flush=True)
+        return ""
+
+
 def rank_files(files: List[ParsedFile]) -> Dict[str, TriageResult]:
     results: Dict[str, TriageResult] = {}
 

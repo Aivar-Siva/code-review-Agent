@@ -46,34 +46,36 @@ def _build_summary(
     triage_results: Dict[str, TriageResult],
     skipped: List[str],
     commit_sha: str,
+    pr_overview: str,
+    inline_count: int,
 ) -> str:
-    counts = {s: 0 for s in Severity}
-    for f in findings:
-        counts[f.severity] += 1
+    reviewed = [(fname, tr) for fname, tr in triage_results.items() if tr.risk_level != RiskLevel.SKIP]
+    total_reviewed = len(reviewed)
+    total_files = total_reviewed + len(skipped)
 
-    lines = ["## 🤖 PR Review Agent Summary\n"]
-    lines.append(f"**Commit reviewed:** `{commit_sha[:8]}`\n")
+    lines = ["## Pull request overview"]
+    if pr_overview:
+        lines.append(f"\n{pr_overview}\n")
 
-    if findings:
-        lines.append("### Findings")
-        lines.append(f"- 🔴 Critical: {counts[Severity.CRITICAL]}")
-        lines.append(f"- 🟠 High: {counts[Severity.HIGH]}")
-        lines.append(f"- 🟡 Medium: {counts[Severity.MEDIUM]}")
-        lines.append(f"- 💡 Suggestions: {counts[Severity.SUGGESTION]}\n")
-    else:
-        lines.append("✅ No issues found.\n")
+    lines.append("**Changes:**\n")
+    for fname, tr in triage_results.items():
+        status_word = "Added" if tr.risk_level != RiskLevel.SKIP else "Skipped"
+        lines.append(f"- {status_word} `{fname}`: {tr.reasoning}")
 
-    if triage_results:
-        lines.append("### Files Reviewed")
-        for fname, tr in triage_results.items():
-            if tr.risk_level != RiskLevel.SKIP:
-                lines.append(f"- `{fname}` — **{tr.risk_level.value}** risk")
+    lines.append(f"\n---\n")
+    lines.append(f"Reviewed {total_reviewed} out of {total_files} changed files and generated {inline_count} comment{'s' if inline_count != 1 else ''}.\n")
+
+    if reviewed:
+        lines.append("| File | Description |")
+        lines.append("|------|-------------|")
+        for fname, tr in reviewed:
+            desc = tr.reasoning if tr.reasoning and tr.reasoning != "heuristic fallback" else f"{tr.risk_level.value} risk file"
+            lines.append(f"| `{fname}` | {desc} |")
 
     if skipped:
-        lines.append("\n### Skipped Files")
-        for fname in skipped:
-            lines.append(f"- `{fname}` (auto-generated / lock file)")
+        lines.append(f"\n*Skipped {len(skipped)} auto-generated/lock file(s).*")
 
+    lines.append(f"\n`{commit_sha[:8]}`")
     return "\n".join(lines)
 
 
@@ -85,9 +87,10 @@ def post_review(
     parsed_files: Dict[str, ParsedFile],
     triage_results: Dict[str, TriageResult],
     skipped: List[str],
+    pr_overview: str = "",
 ) -> None:
     inline_comments = _build_inline_comments(findings, parsed_files)
-    summary = _build_summary(findings, triage_results, skipped, commit_sha)
+    summary = _build_summary(findings, triage_results, skipped, commit_sha, pr_overview, len(inline_comments))
 
     if inline_comments or findings:
         github.post_review(repo, pr_number, commit_sha, "", inline_comments)

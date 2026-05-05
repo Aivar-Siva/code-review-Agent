@@ -57,15 +57,14 @@ def parse_patch(filename: str, patch: str, status: str = "modified") -> ParsedFi
 
 def get_diff_position(parsed_file: ParsedFile, new_line_number: int) -> Optional[int]:
     """Return the diff position (1-based offset in patch) for a given new-file line number."""
-    position = 0
     for hunk in parsed_file.hunks:
-        position += 1  # the @@ header line itself
+        position = hunk.diff_position_start  # @@ header is at this position
         new_line = hunk.new_start
         for line in hunk.lines:
             position += 1
             if not line.startswith("-"):
                 if new_line == new_line_number:
-                    return hunk.diff_position_start + (position - 1)
+                    return position
                 new_line += 1
     return None
 

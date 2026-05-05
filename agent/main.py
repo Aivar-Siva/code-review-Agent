@@ -46,6 +46,12 @@ def main():
         triage_results = triage.rank_files(list(parsed_files.values()))
         _log(f"[agent] Triage complete: {[(k, v.risk_level.value) for k, v in triage_results.items()]}")
 
+        pr_overview = triage.generate_pr_overview(
+            pr_meta.get("title", ""),
+            pr_meta.get("body", ""),
+            triage_results,
+        )
+
         skipped = [fname for fname, tr in triage_results.items() if tr.risk_level == RiskLevel.SKIP]
         active_files = [
             (fname, tr) for fname, tr in triage_results.items()
@@ -93,6 +99,7 @@ def main():
             parsed_files=parsed_files,
             triage_results=triage_results,
             skipped=skipped,
+            pr_overview=pr_overview,
         )
         _log("[agent] Done.")
 
