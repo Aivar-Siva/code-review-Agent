@@ -15,13 +15,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          repository: Aivar-Siva/code-review-Agent
+          path: agent-src
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r agent-src/requirements.txt
 
       - name: Run PR Review Agent
         env:
@@ -30,3 +33,4 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BEDROCK_PROXY_URL: ${{ secrets.BEDROCK_PROXY_URL }}
         run: python -m agent.main
+        working-directory: agent-src
