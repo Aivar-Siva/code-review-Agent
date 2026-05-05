@@ -69,7 +69,8 @@ def _build_summary(
         lines.append("| File | Description |")
         lines.append("|------|-------------|")
         for fname, tr in reviewed:
-            lines.append(f"| `{fname}` | {tr.reasoning} |")
+            desc = tr.reasoning if tr.reasoning and tr.reasoning != "heuristic fallback" else f"{tr.risk_level.value} risk file"
+            lines.append(f"| `{fname}` | {desc} |")
 
     if skipped:
         lines.append(f"\n*Skipped {len(skipped)} auto-generated/lock file(s).*")
